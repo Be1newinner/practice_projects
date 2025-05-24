@@ -1,44 +1,51 @@
 import { InjectModel } from '@nestjs/mongoose';
 import { User } from './user.schema';
 import { Model } from 'mongoose';
-import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { UnauthorizedException } from '@nestjs/common';
+import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { TokenService } from './utils/jwt';
+import { RegisterDTO } from './dtos/register.dto';
+import { LoginDTO } from './dtos/login.dto';
 
 export class AuthService {
   constructor(
     @InjectModel(User.name) private userModel: Model<User>,
-    private jwtService: JwtService,
+    private readonly tokenService: TokenService,
   ) {}
 
-  async register(email: string, password: string) {
-    const hashedPassword = await bcrypt.hash(password, 10);
+  async register(dto: RegisterDTO) {
+    const exists = await this.userModel.findOne({ email: dto.email });
+    if (exists) throw new ConflictException('Email already in use');
+
+    const hashedPassword = await bcrypt.hash(dto.password, 10);
     const user = await this.userModel.create({
-      email,
+      email: dto.email,
       password: hashedPassword,
     });
     console.log(user);
     return { message: 'user created successfully!' };
   }
 
-  async validateUser(email: string, password: string) {
+  async validateUser(dto: LoginDTO) {
     const user = await this.userModel
       .findOne({
-        email,
+        email: dto.email,
       })
       .select('password _id role');
-    if (!user || !(await bcrypt.compare(password, user.password))) {
+    if (!user || !(await bcrypt.compare(dto.password, user.password))) {
       throw new UnauthorizedException('Invalid Credentials');
     }
     console.log(user);
     return user;
   }
 
-  async login(email: string, password: string) {
-    const user = await this.validateUser(email, password);
-    const payload = { sub: user._id, email: user.email, role: user.role };
-    console.log(user);
-    const access_token = await this.jwtService.signAsync(payload);
+  async login(dto: LoginDTO) {
+    const user = await this.validateUser(dto);
+    const access_token = this.tokenService.generateToken({
+      id: user._id as string,
+      email: user.email,
+      role: user.role,
+    });
     return {
       message: 'user loggedin successfully!',
       data: {
